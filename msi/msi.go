@@ -65,9 +65,30 @@ func (p *provider) getMsiHelper(queryParams map[string]string) (*Msi, error) {
 	}
 	requestUrl.RawQuery = urlQuery.Encode()
 
-	code, body, err := p.httpClient.Get(requestUrl.String(), map[string]string{"Metadata": "true"})
+	code, respHeaders, body, err := p.httpClient.GetWithHeaders(requestUrl.String(), map[string]string{"Metadata": "true"})
 	if err != nil {
 		return &msi, err
+	}
+
+	// Arc uses a challenge response mechanism to get the token
+	// If the response code is 401, Arc will have a header Www-Authenticate: Basic realm=<location of the token>
+	if GetMetadataIdentityURL() != metadataIdentityURL && code == 401 {
+		// tokenLocation := "C:\\ProgramData\\AzureConnectedMachineAgent\\Tokens\05729db9-4b64-44c7-a613-6d28a0247cf0.key"
+		tokenLocation := respHeaders["Www-Authenticate"][0]
+		if len(tokenLocation) == 0 {
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v", code))
+		}
+
+		tokenLocation = tokenLocation[len("Basic realm="):]
+		token, err := os.ReadFile(tokenLocation)
+		if err != nil {
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to read arc token file %s", tokenLocation))
+		}
+
+		code, body, err = p.httpClient.Get(requestUrl.String(), map[string]string{"Metadata": "true", "Authorization": "Basic " + string(token)})
+		if err != nil {
+			return &msi, err
+		}
 	}
 
 	if code != 200 {
@@ -135,7 +156,8 @@ func (msi *Msi) GetJson() (string, error) {
 func GetMetadataIdentityURL() string {
 	envMetadataIdentityURL := os.Getenv(identityEnvVar)
 	if envMetadataIdentityURL != "" {
-		return envMetadataIdentityURL
+		// the identity endpoint doesn't contain the api-version query parameter
+		return envMetadataIdentityURL + "?api-version=2021-02-01"
 	}
 	return metadataIdentityURL
 }

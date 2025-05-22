@@ -3,12 +3,15 @@
 
 package httputil
 
+import "net/http"
+
 type MockHttpClient struct {
 	// overwrite these methods to get the desired output
-	Getfunc    func(url string, headers map[string]string) (responseCode int, body []byte, err error)
-	Postfunc   func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
-	Putfunc    func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
-	Deletefunc func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
+	Getfunc            func(url string, headers map[string]string) (responseCode int, body []byte, err error)
+	GetfuncWithHeaders func(url string, headers map[string]string) (responseCode int, respHeaders http.Header, body []byte, err error)
+	Postfunc           func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
+	Putfunc            func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
+	Deletefunc         func(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
 }
 
 func (client *MockHttpClient) Get(url string, headers map[string]string) (responseCode int, body []byte, err error) {
@@ -23,4 +26,8 @@ func (client *MockHttpClient) Put(url string, headers map[string]string, payload
 }
 func (client *MockHttpClient) Delete(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
 	return client.Deletefunc(url, headers, payload)
+}
+
+func (client *MockHttpClient) GetWithHeaders(url string, headers map[string]string) (responseCode int, respHeaders http.Header, body []byte, err error) {
+	return client.GetfuncWithHeaders(url, headers)
 }

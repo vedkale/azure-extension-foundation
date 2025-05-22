@@ -7,13 +7,14 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+
 	"github.com/Azure/azure-extension-foundation/errorhelper"
 	"github.com/Azure/azure-extension-foundation/httputil"
 	"github.com/Azure/azure-extension-foundation/metadata"
 	"github.com/Azure/azure-extension-foundation/msi"
-	"io/ioutil"
-	"net/http"
-	"net/url"
 )
 
 type msiHttpClient struct {
@@ -52,22 +53,30 @@ func NewMsiHttpClient(msiProvider msi.MsiProvider, mdata *metadata.Metadata, ret
 }
 
 func (client *msiHttpClient) Get(url string, headers map[string]string) (responseCode int, body []byte, err error) {
+	code, _, body, err := client.issueRequest(httputil.OperationGet, url, headers, nil)
+	return code, body, err
+}
+
+func (client *msiHttpClient) GetWithHeaders(url string, headers map[string]string) (responseCode int, respHeaders http.Header, body []byte, err error) {
 	return client.issueRequest(httputil.OperationGet, url, headers, nil)
 }
 
 // Post issues a post request
 func (client *msiHttpClient) Post(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(httputil.OperationPost, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(httputil.OperationPost, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
 // Put issues a put request
 func (client *msiHttpClient) Put(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(httputil.OperationPut, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(httputil.OperationPut, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
 // Delete issues a delete request
 func (client *msiHttpClient) Delete(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(httputil.OperationDelete, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(httputil.OperationDelete, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
 func (client *msiHttpClient) addVmIdQueryParameterToUrl(u string) (string, error) {
@@ -107,11 +116,11 @@ func (client *msiHttpClient) setMsiAuthenticationHeader(request *http.Request) {
 	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", client.msi.AccessToken))
 }
 
-func (client *msiHttpClient) issueRequest(operation string, url string, headers map[string]string, payload *bytes.Buffer) (int, []byte, error) {
+func (client *msiHttpClient) issueRequest(operation string, url string, headers map[string]string, payload *bytes.Buffer) (int, http.Header, []byte, error) {
 	// add query parameter for vmId
 	modifiedUrl, err := client.addVmIdQueryParameterToUrl(url)
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 	request, err := http.NewRequest(operation, modifiedUrl, nil)
 	if payload != nil && payload.Len() != 0 {
@@ -121,7 +130,7 @@ func (client *msiHttpClient) issueRequest(operation string, url string, headers 
 	// Initialize and refresh msi as required
 	err = client.refreshMsiAuthentication()
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 	// Add authorization if required
 	client.setMsiAuthenticationHeader(request)
@@ -139,7 +148,7 @@ func (client *msiHttpClient) issueRequest(operation string, url string, headers 
 			// Initialize as refresh msi as required
 			err = client.refreshMsiAuthentication()
 			if err != nil {
-				return -1, nil, errorhelper.AddStackToError(err)
+				return -1, nil, nil, errorhelper.AddStackToError(err)
 			}
 			// Add authorization if required
 			client.setMsiAuthenticationHeader(request)
@@ -151,15 +160,15 @@ func (client *msiHttpClient) issueRequest(operation string, url string, headers 
 	}
 
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	code := res.StatusCode
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 
-	return code, body, nil
+	return code, res.Header, body, nil
 }

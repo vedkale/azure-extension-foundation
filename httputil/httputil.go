@@ -6,11 +6,12 @@ package httputil
 import (
 	"bytes"
 	"crypto/tls"
-	"github.com/Azure/azure-extension-foundation/errorhelper"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/Azure/azure-extension-foundation/errorhelper"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 
 type HttpClient interface {
 	Get(url string, headers map[string]string) (responseCode int, body []byte, err error)
+	GetWithHeaders(url string, headers map[string]string) (responseCode int, respHeaders http.Header, body []byte, err error)
 	Post(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
 	Put(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
 	Delete(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error)
@@ -157,25 +159,34 @@ func NewInsecureHttpClientWithCertificates(certificate string, key string, retry
 
 // Get issues a get request
 func (client *Client) Get(url string, headers map[string]string) (responseCode int, body []byte, err error) {
+	code, _, body, err := client.issueRequest(OperationGet, url, headers, nil)
+	return code, body, err
+}
+
+// Get issues a get request adn returns the response headers
+func (client *Client) GetWithHeaders(url string, headers map[string]string) (responseCode int, respHeaders http.Header, body []byte, err error) {
 	return client.issueRequest(OperationGet, url, headers, nil)
 }
 
 // Post issues a post request
 func (client *Client) Post(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(OperationPost, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(OperationPost, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
 // Put issues a put request
 func (client *Client) Put(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(OperationPut, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(OperationPut, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
 // Delete issues a delete request
 func (client *Client) Delete(url string, headers map[string]string, payload []byte) (responseCode int, body []byte, err error) {
-	return client.issueRequest(OperationDelete, url, headers, bytes.NewBuffer(payload))
+	code, _, body, err := client.issueRequest(OperationDelete, url, headers, bytes.NewBuffer(payload))
+	return code, body, err
 }
 
-func (client *Client) issueRequest(operation string, url string, headers map[string]string, payload *bytes.Buffer) (int, []byte, error) {
+func (client *Client) issueRequest(operation string, url string, headers map[string]string, payload *bytes.Buffer) (int, http.Header, []byte, error) {
 	request, err := http.NewRequest(operation, url, nil)
 	if payload != nil && payload.Len() != 0 {
 		request, err = http.NewRequest(operation, url, payload)
@@ -200,15 +211,15 @@ func (client *Client) issueRequest(operation string, url string, headers map[str
 	}
 
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 
 	body, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	code := res.StatusCode
 	if err != nil {
-		return -1, nil, errorhelper.AddStackToError(err)
+		return -1, nil, nil, errorhelper.AddStackToError(err)
 	}
 
-	return code, body, nil
+	return code, res.Header, body, nil
 }
