@@ -73,10 +73,13 @@ func (p *provider) getMsiHelper(queryParams map[string]string) (*Msi, error) {
 	// Arc uses a challenge response mechanism to get the token
 	// If the response code is 401, Arc will have a header Www-Authenticate: Basic realm=<location of the token>
 	if GetMetadataIdentityURL() != metadataIdentityURL && code == 401 {
-		// tokenLocation := "C:\\ProgramData\\AzureConnectedMachineAgent\\Tokens\05729db9-4b64-44c7-a613-6d28a0247cf0.key"
-		tokenLocation := respHeaders["Www-Authenticate"][0]
+		wwwAuthenticateHeader, exists := respHeaders["Www-Authenticate"]
+		if !exists || len(wwwAuthenticateHeader) == 0 {
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: Www-Authenticate header missing or empty", code))
+		}
+		tokenLocation := wwwAuthenticateHeader[0]
 		if len(tokenLocation) == 0 {
-			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v", code))
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: token location is empty", code))
 		}
 
 		tokenLocation = tokenLocation[len("Basic realm="):]
