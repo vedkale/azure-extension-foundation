@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-extension-foundation/errorhelper"
@@ -77,15 +78,14 @@ func (p *provider) getMsiHelper(queryParams map[string]string) (*Msi, error) {
 		if !exists || len(wwwAuthenticateHeader) == 0 {
 			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: Www-Authenticate header missing or empty", code))
 		}
-		tokenLocation := wwwAuthenticateHeader[0]
-		if len(tokenLocation) == 0 {
+		tokenLocationHeader := wwwAuthenticateHeader[0]
+		if len(tokenLocationHeader) == 0 {
 			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: token location is empty", code))
 		}
 
-		tokenLocation = tokenLocation[len("Basic realm="):]
-		token, err := os.ReadFile(tokenLocation)
+		token, err := readHimdsTokenFile(tokenLocationHeader)
 		if err != nil {
-			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to read arc token file %s", tokenLocation))
+			return &msi, errorhelper.AddStackToError(err)
 		}
 
 		code, body, err = p.httpClient.Get(requestUrl.String(), map[string]string{"Metadata": "true", "Authorization": "Basic " + string(token)})
@@ -163,4 +163,27 @@ func GetMetadataIdentityURL() string {
 		return envMetadataIdentityURL + "?api-version=2021-02-01"
 	}
 	return metadataIdentityURL
+}
+
+func readHimdsTokenFile(tokenLocationHeader string) (string, error) {
+	parts := strings.SplitN(tokenLocationHeader, "=", 2)
+	if len(parts) != 2 {
+		return "", errorhelper.AddStackToError(fmt.Errorf("invalid HIMDS token location header format: %s", tokenLocationHeader))
+	}
+
+	tokenFilePath := strings.TrimSpace(parts[1])
+
+	// Validate the token file path: /var/opt/azcmagent/tokens/<guid>.key
+	if !strings.HasPrefix(tokenFilePath, "/var/opt/azcmagent/tokens/") || !strings.HasSuffix(tokenFilePath, ".key") {
+		return "", errorhelper.AddStackToError(fmt.Errorf("invalid HIMDS token file path: %s", tokenFilePath))
+	}
+
+	token, err := os.ReadFile(tokenFilePath)
+	if err != nil {
+		return "", errorhelper.AddStackToError(fmt.Errorf("unable to read HIMDS token file %s", tokenFilePath))
+	}
+	if len(token) == 0 {
+		return "", errorhelper.AddStackToError(fmt.Errorf("HIMDS token file %s is empty", tokenFilePath))
+	}
+	return string(token), nil
 }
