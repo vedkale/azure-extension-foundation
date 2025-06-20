@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-extension-foundation/errorhelper"
@@ -65,9 +66,32 @@ func (p *provider) getMsiHelper(queryParams map[string]string) (*Msi, error) {
 	}
 	requestUrl.RawQuery = urlQuery.Encode()
 
-	code, body, err := p.httpClient.Get(requestUrl.String(), map[string]string{"Metadata": "true"})
+	code, respHeaders, body, err := p.httpClient.GetWithHeaders(requestUrl.String(), map[string]string{"Metadata": "true"})
 	if err != nil {
 		return &msi, err
+	}
+
+	// Arc uses a challenge response mechanism to get the token
+	// If the response code is 401, Arc will have a header Www-Authenticate: Basic realm=<location of the token>
+	if GetMetadataIdentityURL() != metadataIdentityURL && code == 401 {
+		wwwAuthenticateHeader, exists := respHeaders["Www-Authenticate"]
+		if !exists || len(wwwAuthenticateHeader) == 0 {
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: Www-Authenticate header missing or empty", code))
+		}
+		tokenLocationHeader := wwwAuthenticateHeader[0]
+		if len(tokenLocationHeader) == 0 {
+			return &msi, errorhelper.AddStackToError(fmt.Errorf("unable to get msi, metadata service response code %v: token location is empty", code))
+		}
+
+		token, err := readHimdsTokenFile(tokenLocationHeader)
+		if err != nil {
+			return &msi, errorhelper.AddStackToError(err)
+		}
+
+		code, body, err = p.httpClient.Get(requestUrl.String(), map[string]string{"Metadata": "true", "Authorization": "Basic " + string(token)})
+		if err != nil {
+			return &msi, err
+		}
 	}
 
 	if code != 200 {
@@ -135,7 +159,31 @@ func (msi *Msi) GetJson() (string, error) {
 func GetMetadataIdentityURL() string {
 	envMetadataIdentityURL := os.Getenv(identityEnvVar)
 	if envMetadataIdentityURL != "" {
-		return envMetadataIdentityURL
+		// the identity endpoint doesn't contain the api-version query parameter
+		return envMetadataIdentityURL + "?api-version=2021-02-01"
 	}
 	return metadataIdentityURL
+}
+
+func readHimdsTokenFile(tokenLocationHeader string) (string, error) {
+	parts := strings.SplitN(tokenLocationHeader, "=", 2)
+	if len(parts) != 2 {
+		return "", errorhelper.AddStackToError(fmt.Errorf("invalid HIMDS token location header format: %s", tokenLocationHeader))
+	}
+
+	tokenFilePath := strings.TrimSpace(parts[1])
+
+	// Validate the token file path: /var/opt/azcmagent/tokens/<guid>.key
+	if !strings.HasPrefix(tokenFilePath, "/var/opt/azcmagent/tokens/") || !strings.HasSuffix(tokenFilePath, ".key") {
+		return "", errorhelper.AddStackToError(fmt.Errorf("invalid HIMDS token file path: %s", tokenFilePath))
+	}
+
+	token, err := os.ReadFile(tokenFilePath)
+	if err != nil {
+		return "", errorhelper.AddStackToError(fmt.Errorf("unable to read HIMDS token file %s", tokenFilePath))
+	}
+	if len(token) == 0 {
+		return "", errorhelper.AddStackToError(fmt.Errorf("HIMDS token file %s is empty", tokenFilePath))
+	}
+	return string(token), nil
 }
